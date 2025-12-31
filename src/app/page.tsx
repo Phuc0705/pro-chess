@@ -156,37 +156,52 @@ export default function Home() {
   // Online mode
   useEffect(() => {
     if (mode === "online") {
-      const urlParams = new URLSearchParams(window.location.search);
-      let id = urlParams.get("room");
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        let id = urlParams.get("room");
 
-      if (!id) {
-        id = uuidv4().slice(0, 8);
-        window.history.replaceState({}, "", `?room=${id}`);
-        setRoomId(id);
-        setMyColor("w");
-        set(ref(db, `rooms/${id}`), { fen: game.fen() });
-      } else {
-        setRoomId(id);
-        setMyColor("b");
-      }
-
-      const roomRef = ref(db, `rooms/${id}`);
-      onValue(roomRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data?.fen) {
-          safeGameMutate((g) => g.load(data.fen));
+        if (!id) {
+          id = uuidv4().slice(0, 8);
+          window.history.replaceState({}, "", `?room=${id}`);
+          setRoomId(id);
+          setMyColor("w");
+          set(ref(db, `rooms/${id}`), { fen: game.fen() }).catch((error) => {
+            console.warn("Firebase write error:", error);
+          });
+        } else {
+          setRoomId(id);
+          setMyColor("b");
         }
-      });
+
+        const roomRef = ref(db, `rooms/${id}`);
+        onValue(roomRef, (snapshot) => {
+          const data = snapshot.val();
+          if (data?.fen) {
+            safeGameMutate((g) => g.load(data.fen));
+          }
+        }, (error) => {
+          console.warn("Firebase read error:", error);
+        });
+      } catch (error) {
+        console.error("Firebase initialization error:", error);
+      }
     }
-  }, [mode]);
+  }, [mode, safeGameMutate]);
 
   useEffect(() => {
     if (mode === "online" && roomId) {
-      set(ref(db, `rooms/${roomId}`), { fen: game.fen() });
+      try {
+        set(ref(db, `rooms/${roomId}`), { fen: game.fen() }).catch((error) => {
+          console.warn("Firebase update error:", error);
+        });
+      } catch (error) {
+        console.error("Firebase update error:", error);
+      }
     }
   }, [game.fen(), mode, roomId]);
 
   function onDrop(sourceSquare: string, targetSquare: string) {
+    console.log("onDrop called:", sourceSquare, "->", targetSquare, "mode:", mode, "canDrag:", canDrag);
     try {
       // Tạo bản copy của game để kiểm tra move
       const gameCopy = new Chess(game.fen());
@@ -197,6 +212,7 @@ export default function Home() {
       });
 
       if (!move) {
+        console.log("Invalid move");
         return false;
       }
 

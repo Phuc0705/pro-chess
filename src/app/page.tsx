@@ -376,7 +376,7 @@ export default function Home() {
         <div className="shadow-2xl rounded-xl overflow-hidden border-4 border-white/20">
           
           <Chessboard
-            fen={game.fen()}
+            position={game.fen()}
             onPieceDrop={onDrop}
             arePiecesDraggable={canDrag}
             boardOrientation={myColor === "b" ? "black" : "white"}

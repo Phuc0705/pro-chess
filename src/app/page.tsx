@@ -374,9 +374,9 @@ export default function Home() {
 
       <div className="flex gap-6 items-start">
         <div className="shadow-2xl rounded-xl overflow-hidden border-4 border-white/20">
-          {/* @ts-ignore - react-chessboard v5 API */}
+          
           <Chessboard
-            position={game.fen()}
+            fen={game.fen()}
             onPieceDrop={onDrop}
             arePiecesDraggable={canDrag}
             boardOrientation={myColor === "b" ? "black" : "white"}

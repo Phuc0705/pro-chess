@@ -186,34 +186,62 @@ export default function Home() {
     }
   }, [game.fen(), mode, roomId]);
 
-  function onDrop(source: string, target: string) {
-    const move = game.move({ from: source, to: target, promotion: "q" });
-    if (!move) return false;
+  function onDrop(sourceSquare: string, targetSquare: string) {
+    try {
+      // Tạo bản copy của game để kiểm tra move
+      const gameCopy = new Chess(game.fen());
+      const move = gameCopy.move({
+        from: sourceSquare,
+        to: targetSquare,
+        promotion: "q",
+      });
 
-    const moveNotation = move.san;
-    setLastMove(moveNotation);
+      if (!move) {
+        return false;
+      }
 
-    // Lưu FEN trước khi đi nước (chỉ lần đầu)
-    if (gameHistory.length === 0) {
-      setGameHistory([game.fen()]);
+      const moveNotation = move.san;
+      
+      // Lưu FEN trước khi đi nước (chỉ lần đầu)
+      const currentFen = game.fen();
+      if (gameHistory.length === 0) {
+        setGameHistory([currentFen]);
+      }
+
+      // Cập nhật game state
+      setGame((prevGame) => {
+        const newGame = new Chess(prevGame.fen());
+        const result = newGame.move({
+          from: sourceSquare,
+          to: targetSquare,
+          promotion: "q",
+        });
+        
+        if (result) {
+          setLastMove(moveNotation);
+          // Lưu FEN sau khi đi nước
+          setGameHistory((prev) => [...prev, newGame.fen()]);
+          
+          // Đánh giá nước đi (chỉ khi không phải online và là lượt của người chơi)
+          if (mode !== "online" && (mode === "local" || (mode === "bot" && newGame.turn() === "b"))) {
+            setTimeout(() => {
+              analyzeMove(moveNotation);
+            }, 100);
+          }
+
+          if (mode === "bot") {
+            setTimeout(() => makeBotMove(), 500);
+          }
+        }
+        
+        return newGame;
+      });
+
+      return true;
+    } catch (error) {
+      console.error("Error in onDrop:", error);
+      return false;
     }
-
-    safeGameMutate((g) => {
-      g.move(move);
-      // Lưu FEN sau khi đi nước
-      setGameHistory(prev => [...prev, g.fen()]);
-    });
-
-    // Đánh giá nước đi (chỉ khi không phải online và là lượt của người chơi)
-    if (mode !== "online" && (mode === "local" || (mode === "bot" && game.turn() === "b"))) {
-      setTimeout(() => {
-        analyzeMove(moveNotation);
-      }, 100);
-    }
-
-    if (mode === "bot") makeBotMove();
-
-    return true;
   }
 
   const canDrag =
@@ -330,13 +358,14 @@ export default function Home() {
 
       <div className="flex gap-6 items-start">
         <div className="shadow-2xl rounded-xl overflow-hidden border-4 border-white/20">
+          {/* @ts-ignore - react-chessboard v5 API */}
           <Chessboard
-            // @ts-expect-error - react-chessboard v5 uses position prop
             position={game.fen()}
             onPieceDrop={onDrop}
             arePiecesDraggable={canDrag}
             boardOrientation={myColor === "b" ? "black" : "white"}
             boardWidth={600}
+            key={game.fen()}
           />
         </div>
 

@@ -29,6 +29,7 @@ export default function Home() {
   const [gameHistory, setGameHistory] = useState<string[]>([]);
   const [showAnalysis, setShowAnalysis] = useState(false);
   const previousScoreRef = useRef<number>(0);
+  const SafeChessboard = Chessboard as any;
 
   const safeGameMutate = useCallback((modify: (g: Chess) => void) => {
     setGame((g) => {
@@ -374,24 +375,28 @@ export default function Home() {
 
       <div className="flex gap-6 items-start">
         <div className="shadow-2xl rounded-xl overflow-hidden border-4 border-white/20">
-          
-          <Chessboard
+          {/* Thay Chessboard bằng SafeChessboard */}
+          <SafeChessboard
             position={game.fen()}
             onPieceDrop={onDrop}
             arePiecesDraggable={canDrag}
             boardOrientation={myColor === "b" ? "black" : "white"}
             boardWidth={600}
-            key={game.fen()}
           />
         </div>
 
         {/* Lịch sử nước đi */}
         {moveHistory.length > 0 && (
           <div className="bg-black/40 backdrop-blur-md rounded-xl p-4 max-h-[600px] overflow-y-auto min-w-[250px]">
-            <h3 className="text-white text-xl font-bold mb-4">Lịch sử nước đi</h3>
+            <h3 className="text-white text-xl font-bold mb-4">
+              Lịch sử nước đi
+            </h3>
             <div className="space-y-2">
               {moveHistory.map((item, index) => {
-                const qualityIcons: Record<Exclude<MoveQuality, null>, string> = {
+                const qualityIcons: Record<
+                  Exclude<MoveQuality, null>,
+                  string
+                > = {
                   brilliant: "✨",
                   best: "⭐",
                   good: "👍",
@@ -404,7 +409,9 @@ export default function Home() {
                     key={index}
                     className="flex items-center gap-2 text-white bg-white/10 rounded-lg px-3 py-2"
                   >
-                    <span className="text-lg">{item.quality ? qualityIcons[item.quality] : ""}</span>
+                    <span className="text-lg">
+                      {item.quality ? qualityIcons[item.quality] : ""}
+                    </span>
                     <span className="font-mono">{item.notation}</span>
                   </div>
                 );

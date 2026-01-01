@@ -8,13 +8,15 @@ import { db } from "@/app/lib/firebase";
 import { ref, onValue, set } from "firebase/database";
 import MoveEvaluation, { MoveQuality } from "@/app/components/MoveEvaluation";
 import GameAnalysis from "@/app/components/GameAnalysis";
-import { evaluateMove, parseStockfishScore, EvaluationResult } from "@/app/lib/moveEvaluator";
+import { evaluateMove } from "@/app/lib/moveEvaluator";
 
 interface MoveHistory {
   move: string;
   quality: MoveQuality;
   notation: string;
 }
+
+const SafeChessboard = Chessboard as any;
 
 export default function Home() {
   const [game, setGame] = useState(new Chess());
@@ -23,13 +25,28 @@ export default function Home() {
   const [myColor, setMyColor] = useState<"w" | "b">("w");
   const [stockfish, setStockfish] = useState<Worker | null>(null);
   const [evaluationWorker, setEvaluationWorker] = useState<Worker | null>(null);
-  const [currentMoveQuality, setCurrentMoveQuality] = useState<MoveQuality>(null);
+  const [currentMoveQuality, setCurrentMoveQuality] =
+    useState<MoveQuality>(null);
   const [lastMove, setLastMove] = useState<string>("");
   const [moveHistory, setMoveHistory] = useState<MoveHistory[]>([]);
   const [gameHistory, setGameHistory] = useState<string[]>([]);
   const [showAnalysis, setShowAnalysis] = useState(false);
+
+  // State cho Click-to-move
+  const [moveFrom, setMoveFrom] = useState("");
+  const [optionSquares, setOptionSquares] = useState({});
+
   const previousScoreRef = useRef<number>(0);
-  const SafeChessboard = Chessboard as any;
+
+  // FIX 2: Tự động chuyển sang Online nếu thấy link có room
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.get("room")) {
+        setMode("online");
+      }
+    }
+  }, []);
 
   const safeGameMutate = useCallback((modify: (g: Chess) => void) => {
     setGame((g) => {
@@ -59,9 +76,8 @@ export default function Home() {
     }
   }, [mode, safeGameMutate]);
 
-  // Evaluation Worker để đánh giá nước đi
+  // Evaluation Worker
   useEffect(() => {
-    // Chỉ tạo evaluation worker khi không phải mode online (vì online không cần đánh giá)
     if (mode !== "online") {
       const worker = new Worker("/stockfish/stockfish.js");
       worker.postMessage("uci");
@@ -78,83 +94,100 @@ export default function Home() {
     }
   };
 
-  // Hàm đánh giá nước đi khi người chơi đi
-  const analyzeMove = useCallback((moveNotation: string) => {
-    if (!evaluationWorker || mode === "online") return;
+  const analyzeMove = useCallback(
+    (moveNotation: string) => {
+      if (!evaluationWorker || mode === "online") return;
 
-    const tempGame = new Chess(game.fen());
-    const history = tempGame.history({ verbose: true });
-    if (history.length < 1) return;
+      const tempGame = new Chess(game.fen());
+      const history = tempGame.history({ verbose: true });
+      if (history.length < 1) return;
 
-    // Lấy FEN trước nước đi
-    tempGame.undo();
-    const fenBeforeMove = tempGame.fen();
+      tempGame.undo();
+      const fenBeforeMove = tempGame.fen();
 
-    let bestScore = 0;
-    let playerScore = 0;
-    let bestMoveFound = false;
-    let playerScoreFound = false;
+      let bestScore = 0;
+      let playerScore = 0;
+      let bestMoveFound = false;
+      let playerScoreFound = false;
 
-    const handleEvaluation = (event: MessageEvent) => {
-      const msg = event.data.trim();
-      
-      // Tìm nước đi tốt nhất và điểm số của nó
-      if (msg.startsWith("info") && msg.includes("score") && msg.includes("depth 10") && !bestMoveFound) {
-        const scoreMatch = msg.match(/score (cp|mate) (-?\d+)/);
-        if (scoreMatch && msg.includes("pv")) {
-          const scoreType = scoreMatch[1];
-          const scoreValue = parseInt(scoreMatch[2]);
-          bestScore = scoreType === "mate"
-            ? (scoreValue > 0 ? 10000 - scoreValue * 100 : -10000 - Math.abs(scoreValue) * 100)
-            : scoreValue;
-          
-          // Đảo ngược vì đây là điểm số từ góc nhìn của đối thủ
-          bestScore = -bestScore;
-          previousScoreRef.current = bestScore;
-          bestMoveFound = true;
+      const handleEvaluation = (event: MessageEvent) => {
+        const msg = event.data.trim();
+        if (
+          msg.startsWith("info") &&
+          msg.includes("score") &&
+          msg.includes("depth 10") &&
+          !bestMoveFound
+        ) {
+          const scoreMatch = msg.match(/score (cp|mate) (-?\d+)/);
+          if (scoreMatch && msg.includes("pv")) {
+            const scoreType = scoreMatch[1];
+            const scoreValue = parseInt(scoreMatch[2]);
+            bestScore =
+              scoreType === "mate"
+                ? scoreValue > 0
+                  ? 10000 - scoreValue * 100
+                  : -10000 - Math.abs(scoreValue) * 100
+                : scoreValue;
+
+            bestScore = -bestScore;
+            previousScoreRef.current = bestScore;
+            bestMoveFound = true;
+          }
         }
-      }
 
-      // Đánh giá nước đi của người chơi
-      if (msg.startsWith("info") && msg.includes("score") && msg.includes("depth 10") && bestMoveFound && !playerScoreFound) {
-        const scoreMatch = msg.match(/score (cp|mate) (-?\d+)/);
-        if (scoreMatch) {
-          const scoreType = scoreMatch[1];
-          const scoreValue = parseInt(scoreMatch[2]);
-          playerScore = scoreType === "mate"
-            ? (scoreValue > 0 ? 10000 - scoreValue * 100 : -10000 - Math.abs(scoreValue) * 100)
-            : scoreValue;
-          
-          playerScore = -playerScore;
-          playerScoreFound = true;
+        if (
+          msg.startsWith("info") &&
+          msg.includes("score") &&
+          msg.includes("depth 10") &&
+          bestMoveFound &&
+          !playerScoreFound
+        ) {
+          const scoreMatch = msg.match(/score (cp|mate) (-?\d+)/);
+          if (scoreMatch) {
+            const scoreType = scoreMatch[1];
+            const scoreValue = parseInt(scoreMatch[2]);
+            playerScore =
+              scoreType === "mate"
+                ? scoreValue > 0
+                  ? 10000 - scoreValue * 100
+                  : -10000 - Math.abs(scoreValue) * 100
+                : scoreValue;
 
-          // So sánh và đánh giá
-          const quality = evaluateMove(playerScore, bestScore, previousScoreRef.current);
-          setCurrentMoveQuality(quality);
-          setMoveHistory(prev => [...prev, { move: moveNotation, quality, notation: moveNotation }]);
-          
-          evaluationWorker.removeEventListener("message", handleEvaluation);
+            playerScore = -playerScore;
+            playerScoreFound = true;
+
+            const quality = evaluateMove(
+              playerScore,
+              bestScore,
+              previousScoreRef.current
+            );
+            setCurrentMoveQuality(quality);
+            setMoveHistory((prev) => [
+              ...prev,
+              { move: moveNotation, quality, notation: moveNotation },
+            ]);
+
+            evaluationWorker.removeEventListener("message", handleEvaluation);
+          }
         }
-      }
-    };
+      };
 
-    evaluationWorker.addEventListener("message", handleEvaluation);
-
-    // Đánh giá vị trí trước nước đi để tìm nước đi tốt nhất
-    evaluationWorker.postMessage(`position fen ${fenBeforeMove}`);
-    evaluationWorker.postMessage("go depth 10");
-
-    // Đánh giá nước đi của người chơi
-    setTimeout(() => {
-      tempGame.load(fenBeforeMove);
-      tempGame.move(moveNotation);
-      const fenAfterMove = tempGame.fen();
-      evaluationWorker.postMessage(`position fen ${fenAfterMove}`);
+      evaluationWorker.addEventListener("message", handleEvaluation);
+      evaluationWorker.postMessage(`position fen ${fenBeforeMove}`);
       evaluationWorker.postMessage("go depth 10");
-    }, 500);
-  }, [evaluationWorker, game, mode]);
 
-  // Online mode
+      setTimeout(() => {
+        tempGame.load(fenBeforeMove);
+        tempGame.move(moveNotation);
+        const fenAfterMove = tempGame.fen();
+        evaluationWorker.postMessage(`position fen ${fenAfterMove}`);
+        evaluationWorker.postMessage("go depth 10");
+      }, 500);
+    },
+    [evaluationWorker, game, mode]
+  );
+
+  // Online mode logic
   useEffect(() => {
     if (mode === "online") {
       try {
@@ -166,45 +199,124 @@ export default function Home() {
           window.history.replaceState({}, "", `?room=${id}`);
           setRoomId(id);
           setMyColor("w");
-          set(ref(db, `rooms/${id}`), { fen: game.fen() }).catch((error) => {
-            console.warn("Firebase write error:", error);
-          });
+          set(ref(db, `rooms/${id}`), { fen: game.fen() }).catch(console.warn);
         } else {
           setRoomId(id);
           setMyColor("b");
         }
 
         const roomRef = ref(db, `rooms/${id}`);
-        onValue(roomRef, (snapshot) => {
-          const data = snapshot.val();
-          if (data?.fen) {
-            safeGameMutate((g) => g.load(data.fen));
-          }
-        }, (error) => {
-          console.warn("Firebase read error:", error);
-        });
+        onValue(
+          roomRef,
+          (snapshot) => {
+            const data = snapshot.val();
+            if (data?.fen) {
+              safeGameMutate((g) => g.load(data.fen));
+            }
+          },
+          console.warn
+        );
       } catch (error) {
-        console.error("Firebase initialization error:", error);
+        console.error(error);
       }
     }
   }, [mode, safeGameMutate]);
 
   useEffect(() => {
     if (mode === "online" && roomId) {
-      try {
-        set(ref(db, `rooms/${roomId}`), { fen: game.fen() }).catch((error) => {
-          console.warn("Firebase update error:", error);
-        });
-      } catch (error) {
-        console.error("Firebase update error:", error);
-      }
+      set(ref(db, `rooms/${roomId}`), { fen: game.fen() }).catch(console.warn);
     }
   }, [game.fen(), mode, roomId]);
 
-  function onDrop(sourceSquare: string, targetSquare: string) {
-    console.log("onDrop called:", sourceSquare, "->", targetSquare, "mode:", mode, "canDrag:", canDrag);
+  // FIX 3: Đưa getMoveOptions ra ngoài onDrop
+  function getMoveOptions(square: any) {
+    const moves = game.moves({
+      square,
+      verbose: true,
+    });
+    if (moves.length === 0) {
+      setOptionSquares({});
+      return false;
+    }
+
+    const newSquares: any = {};
+    moves.map((move) => {
+      newSquares[move.to] = {
+        background:
+          game.get(move.to) &&
+          game.get(move.to)?.color !== game.get(square)?.color
+            ? "radial-gradient(circle, rgba(0,0,0,.1) 85%, transparent 85%)"
+            : "radial-gradient(circle, rgba(0,0,0,.1) 25%, transparent 25%)",
+        borderRadius: "50%",
+      };
+      return move;
+    });
+    newSquares[square] = {
+      background: "rgba(255, 255, 0, 0.4)",
+    };
+    setOptionSquares(newSquares);
+    return true;
+  }
+
+  // FIX 3: Đưa onSquareClick ra ngoài onDrop
+  function onSquareClick(square: any) {
+    if (mode === "online" && game.turn() !== myColor) return;
+    if (mode === "bot" && game.turn() === "b") return;
+
+    if (square === moveFrom) {
+      setMoveFrom("");
+      setOptionSquares({});
+      return;
+    }
+
     try {
-      // Tạo bản copy của game để kiểm tra move
+      const gameCopy = new Chess(game.fen());
+      const move = gameCopy.move({
+        from: moveFrom,
+        to: square,
+        promotion: "q",
+      });
+
+      if (move) {
+        const moveNotation = move.san;
+        setGame(gameCopy);
+        setMoveFrom("");
+        setOptionSquares({});
+        setLastMove(moveNotation);
+        setGameHistory((prev) => [...prev, gameCopy.fen()]);
+
+        if (
+          mode !== "online" &&
+          (mode === "local" || (mode === "bot" && gameCopy.turn() === "b"))
+        ) {
+          setTimeout(() => analyzeMove(moveNotation), 100);
+        }
+        if (mode === "bot") {
+          setTimeout(makeBotMove, 500);
+        }
+        return;
+      }
+    } catch (error) {
+      // lỗi
+    }
+
+    const piece = game.get(square);
+    if (piece && piece.color === game.turn()) {
+      setMoveFrom(square);
+      getMoveOptions(square);
+    } else {
+      setMoveFrom("");
+      setOptionSquares({});
+    }
+  }
+
+  function onDrop(sourceSquare: string, targetSquare: string) {
+    // Reset highlight khi kéo thả
+    setOptionSquares({});
+    setMoveFrom("");
+
+    console.log("onDrop:", sourceSquare, "->", targetSquare);
+    try {
       const gameCopy = new Chess(game.fen());
       const move = gameCopy.move({
         from: sourceSquare,
@@ -212,20 +324,12 @@ export default function Home() {
         promotion: "q",
       });
 
-      if (!move) {
-        console.log("Invalid move");
-        return false;
-      }
+      if (!move) return false;
 
       const moveNotation = move.san;
-      
-      // Lưu FEN trước khi đi nước (chỉ lần đầu)
       const currentFen = game.fen();
-      if (gameHistory.length === 0) {
-        setGameHistory([currentFen]);
-      }
+      if (gameHistory.length === 0) setGameHistory([currentFen]);
 
-      // Cập nhật game state
       setGame((prevGame) => {
         const newGame = new Chess(prevGame.fen());
         const result = newGame.move({
@@ -233,30 +337,26 @@ export default function Home() {
           to: targetSquare,
           promotion: "q",
         });
-        
+
         if (result) {
           setLastMove(moveNotation);
-          // Lưu FEN sau khi đi nước
           setGameHistory((prev) => [...prev, newGame.fen()]);
-          
-          // Đánh giá nước đi (chỉ khi không phải online và là lượt của người chơi)
-          if (mode !== "online" && (mode === "local" || (mode === "bot" && newGame.turn() === "b"))) {
-            setTimeout(() => {
-              analyzeMove(moveNotation);
-            }, 100);
-          }
 
+          if (
+            mode !== "online" &&
+            (mode === "local" || (mode === "bot" && newGame.turn() === "b"))
+          ) {
+            setTimeout(() => analyzeMove(moveNotation), 100);
+          }
           if (mode === "bot") {
             setTimeout(() => makeBotMove(), 500);
           }
         }
-        
         return newGame;
       });
-
       return true;
     } catch (error) {
-      console.error("Error in onDrop:", error);
+      console.error(error);
       return false;
     }
   }
@@ -278,7 +378,7 @@ export default function Home() {
               ? "Hòa! 🤝"
               : "Kết thúc"}
           </p>
-          
+
           <div className="flex gap-4 mb-8">
             <button
               onClick={() => setShowAnalysis(true)}
@@ -305,17 +405,23 @@ export default function Home() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="text-center">
                   <div className="text-3xl mb-2">⭐</div>
-                  <div className="text-2xl font-bold">{moveHistory.filter(m => m.quality === "best").length}</div>
+                  <div className="text-2xl font-bold">
+                    {moveHistory.filter((m) => m.quality === "best").length}
+                  </div>
                   <div className="text-white/70">Tốt nhất</div>
                 </div>
                 <div className="text-center">
                   <div className="text-3xl mb-2">😬</div>
-                  <div className="text-2xl font-bold">{moveHistory.filter(m => m.quality === "mistake").length}</div>
+                  <div className="text-2xl font-bold">
+                    {moveHistory.filter((m) => m.quality === "mistake").length}
+                  </div>
                   <div className="text-white/70">Sai lầm</div>
                 </div>
                 <div className="text-center">
                   <div className="text-3xl mb-2">🤦</div>
-                  <div className="text-2xl font-bold">{moveHistory.filter(m => m.quality === "blunder").length}</div>
+                  <div className="text-2xl font-bold">
+                    {moveHistory.filter((m) => m.quality === "blunder").length}
+                  </div>
                   <div className="text-white/70">Ngớ ngẩn</div>
                 </div>
               </div>
@@ -382,6 +488,9 @@ export default function Home() {
             arePiecesDraggable={canDrag}
             boardOrientation={myColor === "b" ? "black" : "white"}
             boardWidth={600}
+            onSquareClick={onSquareClick}
+            customSquareStyles={optionSquares}
+            animationDuration={200}
           />
         </div>
 
